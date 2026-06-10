@@ -7,7 +7,7 @@ so the ``backend/`` directory must be on ``sys.path`` for tests to import them.
 import os
 import sys
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -108,3 +108,38 @@ def patched_ai_generator(mocker):
 
     generator = AIGenerator(api_key="test-key", model="test-model")
     return generator, mock_client
+
+
+# --------------------------------------------------------------------------- #
+# FastAPI test app fixtures
+# --------------------------------------------------------------------------- #
+@pytest.fixture(scope="module")
+def mock_rag_system():
+    """The RAGSystem mock instance wired into the test FastAPI app.
+
+    Module-scoped so it survives the full test_api.py run alongside api_client.
+    Individual tests configure return values via this fixture; the autouse
+    ``_reset_api_mocks`` fixture in test_api.py resets state between tests.
+    """
+    return MagicMock()
+
+
+@pytest.fixture(scope="module")
+def api_client(mock_rag_system):
+    """TestClient for the FastAPI app with RAGSystem and StaticFiles mocked.
+
+    RAGSystem is patched before app import so the module-level
+    ``rag_system = RAGSystem(config)`` in app.py gets the mock instance.
+    StaticFiles is patched to avoid a missing ``../frontend`` directory error.
+    """
+    from fastapi.testclient import TestClient
+
+    # Force a clean import of app so the patches take effect.
+    sys.modules.pop("app", None)
+
+    with patch("rag_system.RAGSystem", return_value=mock_rag_system), \
+         patch("fastapi.staticfiles.StaticFiles"):
+        from app import app as fastapi_app  # noqa: E402
+
+        with TestClient(fastapi_app, raise_server_exceptions=False) as client:
+            yield client
