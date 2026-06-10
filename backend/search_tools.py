@@ -1,5 +1,6 @@
 from typing import Dict, Any, Optional, Protocol
 from abc import ABC, abstractmethod
+import json
 from vector_store import VectorStore, SearchResults
 
 
@@ -100,11 +101,13 @@ class CourseSearchTool(Tool):
                 header += f" - Lesson {lesson_num}"
             header += "]"
             
-            # Track source for the UI
-            source = course_title
+            # Track source for the UI (text label + optional lesson link)
+            source_text = course_title
+            link = None
             if lesson_num is not None:
-                source += f" - Lesson {lesson_num}"
-            sources.append(source)
+                source_text += f" - Lesson {lesson_num}"
+                link = self.store.get_lesson_link(course_title, lesson_num)
+            sources.append({"text": source_text, "link": link})
             
             formatted.append(f"{header}\n{doc}")
         
@@ -112,6 +115,76 @@ class CourseSearchTool(Tool):
         self.last_sources = sources
         
         return "\n\n".join(formatted)
+
+
+class CourseOutlineTool(Tool):
+    """Tool for retrieving a course outline (title, link, and lesson list) from course metadata"""
+
+    def __init__(self, vector_store: VectorStore):
+        self.store = vector_store
+        self.last_sources = []  # Track sources from last outline lookup
+
+    def get_tool_definition(self) -> Dict[str, Any]:
+        """Return Anthropic tool definition for this tool"""
+        return {
+            "name": "get_course_outline",
+            "description": (
+                "Get the outline of a course: its title, course link, and the full list "
+                "of lessons (lesson number and title). Use for questions about a course's "
+                "structure, syllabus, or what lessons it contains."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "course_name": {
+                        "type": "string",
+                        "description": "Course title (partial matches work, e.g. 'MCP', 'Introduction')"
+                    }
+                },
+                "required": ["course_name"]
+            }
+        }
+
+    def execute(self, course_name: str) -> str:
+        """
+        Execute the outline tool for the given course.
+
+        Args:
+            course_name: Course title (partial matches are resolved via semantic search)
+
+        Returns:
+            Formatted course outline or an error message
+        """
+
+        # Resolve the (possibly partial) course name to an exact title
+        resolved_course_title = self.store._resolve_course_name(course_name)
+        if not resolved_course_title:
+            return f"No course found matching '{course_name}'."
+
+        # Fetch the course metadata from the catalog (title is the document ID)
+        catalog_results = self.store.course_catalog.get(ids=[resolved_course_title])
+        if not catalog_results or not catalog_results.get('metadatas'):
+            return f"No outline available for course '{resolved_course_title}'."
+
+        course_metadata = catalog_results['metadatas'][0]
+        course_link = course_metadata.get('course_link')
+        lesson_entries = json.loads(course_metadata.get('lessons_json', '[]'))
+
+        # Build the outline: title, link, then one line per lesson sorted by number
+        outline_lines = [f"Course: {resolved_course_title}"]
+        if course_link:
+            outline_lines.append(f"Course Link: {course_link}")
+        outline_lines.append(f"Lessons ({len(lesson_entries)}):")
+        for lesson in sorted(lesson_entries, key=lambda entry: entry.get('lesson_number', 0)):
+            outline_lines.append(
+                f"  Lesson {lesson.get('lesson_number')}: {lesson.get('lesson_title')}"
+            )
+
+        # Surface the course as a UI source via the shared ToolManager machinery
+        self.last_sources = [{"text": resolved_course_title, "link": course_link}]
+
+        return "\n".join(outline_lines)
+
 
 class ToolManager:
     """Manages available tools for the AI"""
