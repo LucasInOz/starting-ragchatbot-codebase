@@ -26,7 +26,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // Theme Management
 function initTheme() {
-  const savedTheme = localStorage.getItem('theme') || 'dark';
+  const savedTheme = localStorage.getItem('theme') || 'light';
   applyTheme(savedTheme, false);
 }
 
@@ -49,7 +49,7 @@ function applyTheme(theme, animate) {
 }
 
 function toggleTheme() {
-  const currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
+  const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
   const nextTheme = currentTheme === 'dark' ? 'light' : 'dark';
   localStorage.setItem('theme', nextTheme);
   applyTheme(nextTheme, true);
